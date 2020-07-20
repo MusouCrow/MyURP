@@ -91,6 +91,13 @@ namespace UnityEngine.Rendering.Universal.Internal
             CoreUtils.SetKeyword(cmd, ShaderKeywordStrings.MixedLightingSubtractive,
                 renderingData.lightData.supportsMixedLighting &&
                 m_MixedLightingSetup == MixedLightingSetup.Subtractive);
+            
+            // PWRD* majiao //
+            CoreUtils.SetKeyword(cmd, ShaderKeywordStrings.MixedLightingShadowmask,
+               renderingData.lightData.supportsMixedLighting &&
+               m_MixedLightingSetup == MixedLightingSetup.ShadowMask);
+            // PWRD* majiao //
+            
             context.ExecuteCommandBuffer(cmd);
             CommandBufferPool.Release(cmd);
         }
@@ -199,6 +206,19 @@ namespace UnityEngine.Rendering.Universal.Internal
                     m_MixedLightingSetup = MixedLightingSetup.Subtractive;
                 }
             }
+
+            // PWRD* majiao //
+            if (light.bakingOutput.mixedLightingMode == MixedLightingMode.Shadowmask && light.bakingOutput.lightmapBakeType == LightmapBakeType.Mixed)
+            {
+                if (lightData.light.shadows != LightShadows.None)
+                {
+                    m_MixedLightingSetup = MixedLightingSetup.ShadowMask;
+                }
+                int channel = light.bakingOutput.occlusionMaskChannel;
+                //light index is baked in the alpha channel of the light's direction
+                lightSpotDir.w = channel + 1;
+            }
+            // PWRD* majiao //
         }
 
         void SetupShaderLightConstants(CommandBuffer cmd, ref RenderingData renderingData)
