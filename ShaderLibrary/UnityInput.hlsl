@@ -209,6 +209,10 @@ TEXTURE2D(unity_LightmapInd);
 // We can have shadowMask only if we have lightmap, so no sampler
 TEXTURE2D(unity_ShadowMask);
 
+// PWRD* majiao //
+SAMPLER(samplerunity_ShadowMask);
+// PWRD* majiao //
+
 // ----------------------------------------------------------------------------
 
 // TODO: all affine matrices should be 3x4.

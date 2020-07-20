@@ -88,11 +88,12 @@ namespace UnityEngine.Rendering.Universal.Internal
                 additionalLightsCount > 0 && additionalLightsPerVertex);
             CoreUtils.SetKeyword(cmd, ShaderKeywordStrings.AdditionalLightsPixel,
                 additionalLightsCount > 0 && !additionalLightsPerVertex);
-            CoreUtils.SetKeyword(cmd, ShaderKeywordStrings.MixedLightingSubtractive,
-                renderingData.lightData.supportsMixedLighting &&
-                m_MixedLightingSetup == MixedLightingSetup.Subtractive);
             
             // PWRD* majiao //
+            CoreUtils.SetKeyword(cmd, ShaderKeywordStrings.MixedLightingSubtractive,
+                renderingData.lightData.supportsMixedLighting &&
+                (m_MixedLightingSetup == MixedLightingSetup.Subtractive || 
+                m_MixedLightingSetup == MixedLightingSetup.ShadowMask));
             CoreUtils.SetKeyword(cmd, ShaderKeywordStrings.MixedLightingShadowmask,
                renderingData.lightData.supportsMixedLighting &&
                m_MixedLightingSetup == MixedLightingSetup.ShadowMask);
