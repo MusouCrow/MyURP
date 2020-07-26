@@ -4,3 +4,4 @@
 
 ### Feature
 * Shadow Mask (Not support distanced)
+* Outline Pass Supported.
