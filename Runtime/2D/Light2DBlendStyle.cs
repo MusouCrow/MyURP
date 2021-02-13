@@ -1,4 +1,5 @@
 using System;
+using UnityEngine.Rendering.Universal;
 using UnityEngine.Scripting.APIUpdating;
 using UnityEngine.Serialization;
 
@@ -46,9 +47,6 @@ namespace UnityEngine.Experimental.Rendering.Universal
             public float multiplicative;
             public float additive;
         }
-
-        [System.Obsolete("This field is obsolete. Blend Styles are now automatically enabled/disabled.")]
-        public bool enabled;
 
         public string name;
 
@@ -125,5 +123,11 @@ namespace UnityEngine.Experimental.Rendering.Universal
                 }
             }
         }
+
+        // Transient data
+        internal bool isDirty { get; set; }
+        internal bool hasRenderTarget { get; set; }
+        internal RenderTargetHandle renderTargetHandle;
+
     }
 }

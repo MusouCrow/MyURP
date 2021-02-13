@@ -1,12 +1,12 @@
-using System;
 using System.IO;
 using UnityEditor.AssetImporters;
 using UnityEngine;
+using UnityEngine.Rendering;
+using UnityEngine.Rendering.Universal;
 
 namespace UnityEditor.Rendering.Universal
 {
-    [Obsolete("FBXMaterialDescriptionPreprocessor is deprecated, consider creating a new AsserPostProcessor rather than overriding it.")]
-    public class FBXMaterialDescriptionPreprocessor : AssetPostprocessor
+    class FBXMaterialDescriptionPreprocessor : AssetPostprocessor
     {
         static readonly uint k_Version = 1;
         static readonly int k_Order = 2;
@@ -22,11 +22,16 @@ namespace UnityEditor.Rendering.Universal
 
         public void OnPreprocessMaterialDescription(MaterialDescription description, Material material, AnimationClip[] clips)
         {
+            var pipelineAsset = GraphicsSettings.currentRenderPipeline;
+            if (!pipelineAsset || pipelineAsset.GetType() != typeof(UniversalRenderPipelineAsset))
+                return;
+
             var lowerCaseExtension = Path.GetExtension(assetPath).ToLower();
             if (lowerCaseExtension != ".fbx" && lowerCaseExtension != ".obj" && lowerCaseExtension != ".blend" && lowerCaseExtension != ".mb" && lowerCaseExtension != ".ma" && lowerCaseExtension != ".max")
                 return;
-            
-            var shader = Shader.Find("Universal Render Pipeline/Lit");
+
+            string path = AssetDatabase.GUIDToAssetPath(ShaderUtils.GetShaderGUID(ShaderPathID.Lit));
+            var shader = AssetDatabase.LoadAssetAtPath<Shader>(path);
             if (shader == null)
                 return;
             

@@ -2,11 +2,12 @@ using System;
 using System.IO;
 using UnityEngine;
 using UnityEditor.AssetImporters;
+using UnityEngine.Rendering;
+using UnityEngine.Rendering.Universal;
 
 namespace UnityEditor.Rendering.Universal
 {
-    [Obsolete("ThreeDSMaterialDescriptionPreprocessor is deprecated, consider creating a new AsserPostProcessor rather than overriding it.")]
-    public class ThreeDSMaterialDescriptionPreprocessor : AssetPostprocessor
+    class ThreeDSMaterialDescriptionPreprocessor : AssetPostprocessor
     {
         static readonly uint k_Version = 1;
         static readonly int k_Order = 2;
@@ -23,11 +24,16 @@ namespace UnityEditor.Rendering.Universal
 
         public void OnPreprocessMaterialDescription(MaterialDescription description, Material material, AnimationClip[] clips)
         {
+            var pipelineAsset = GraphicsSettings.currentRenderPipeline;
+            if (!pipelineAsset || pipelineAsset.GetType() != typeof(UniversalRenderPipelineAsset))
+                return;
+
             var lowerCasePath = Path.GetExtension(assetPath).ToLower();
             if (lowerCasePath != ".3ds")
                 return;
 
-            var shader = Shader.Find("Universal Render Pipeline/Lit");
+            string path = AssetDatabase.GUIDToAssetPath(ShaderUtils.GetShaderGUID(ShaderPathID.Lit));
+            var shader = AssetDatabase.LoadAssetAtPath<Shader>(path);
             if (shader == null)
                 return;
             material.shader = shader;

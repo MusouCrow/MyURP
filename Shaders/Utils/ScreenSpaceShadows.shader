@@ -10,21 +10,13 @@ Shader "Hidden/Universal Render Pipeline/ScreenSpaceShadows"
         // Shadow cascades require cascade index and shadowCoord to be computed on pixel.
         #define _MAIN_LIGHT_SHADOWS_CASCADE
 
-        #pragma prefer_hlslcc gles
-        #pragma exclude_renderers d3d11_9x
         //Keep compiler quiet about Shadows.hlsl.
         #include "Packages/com.unity.render-pipelines.core/ShaderLibrary/Common.hlsl"
         #include "Packages/com.unity.render-pipelines.core/ShaderLibrary/EntityLighting.hlsl"
         #include "Packages/com.unity.render-pipelines.core/ShaderLibrary/ImageBasedLighting.hlsl"
         #include "Packages/com.unity.render-pipelines.universal/ShaderLibrary/Core.hlsl"
         #include "Packages/com.unity.render-pipelines.universal/ShaderLibrary/Shadows.hlsl"
-
-#if defined(UNITY_STEREO_INSTANCING_ENABLED) || defined(UNITY_STEREO_MULTIVIEW_ENABLED)
-        TEXTURE2D_ARRAY_FLOAT(_CameraDepthTexture);
-#else
-        TEXTURE2D_FLOAT(_CameraDepthTexture);
-#endif
-        SAMPLER(sampler_CameraDepthTexture);
+        #include "Packages/com.unity.render-pipelines.universal/ShaderLibrary/DeclareDepthTexture.hlsl"
 
         struct Attributes
         {
