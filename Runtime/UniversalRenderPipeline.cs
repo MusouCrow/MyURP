@@ -119,7 +119,8 @@ namespace UnityEngine.Rendering.Universal
         {
             get
             {
-                bool isMobile = Application.isMobilePlatform;
+                // Must match: Input.hlsl, MAX_VISIBLE_LIGHTS
+                bool isMobile = GraphicsSettings.HasShaderDefine(BuiltinShaderDefine.SHADER_API_MOBILE);
                 if (isMobile && (SystemInfo.graphicsDeviceType == GraphicsDeviceType.OpenGLES2 || (SystemInfo.graphicsDeviceType == GraphicsDeviceType.OpenGLES3 && Graphics.minOpenGLESVersion <= OpenGLESVersion.OpenGLES30)))
                     return k_MaxVisibleAdditionalLightsMobileShaderLevelLessThan45;
 
@@ -434,8 +435,8 @@ namespace UnityEngine.Rendering.Universal
         }
 
         /// <summary>
-        // Renders a camera stack. This method calls RenderSingleCamera for each valid camera in the stack.
-        // The last camera resolves the final target to screen.
+        /// Renders a camera stack. This method calls RenderSingleCamera for each valid camera in the stack.
+        /// The last camera resolves the final target to screen.
         /// </summary>
         /// <param name="context">Render context used to record commands during execution.</param>
         /// <param name="camera">Camera to render.</param>
@@ -449,9 +450,10 @@ namespace UnityEngine.Rendering.Universal
             if (baseCameraAdditionalData != null && baseCameraAdditionalData.renderType == CameraRenderType.Overlay)
                 return;
 
-            // renderer contains a stack if it has additional data and the renderer supports stacking
+            // Renderer contains a stack if it has additional data and the renderer supports stacking
+            // The renderer is checked if it supports Base camera. Since Base is the only relevant type at this moment.
             var renderer = baseCameraAdditionalData?.scriptableRenderer;
-            bool supportsCameraStacking = renderer != null && renderer.supportedRenderingFeatures.cameraStacking;
+            bool supportsCameraStacking = renderer != null && renderer.SupportsCameraStackingType(CameraRenderType.Base);
             List<Camera> cameraStack = (supportsCameraStacking) ? baseCameraAdditionalData?.cameraStack : null;
 
             bool anyPostProcessingEnabled = baseCameraAdditionalData != null && baseCameraAdditionalData.renderPostProcessing;
@@ -478,21 +480,29 @@ namespace UnityEngine.Rendering.Universal
                     {
                         currCamera.TryGetComponent<UniversalAdditionalCameraData>(out var data);
 
-                        if (data == null || data.renderType != CameraRenderType.Overlay)
-                        {
-                            Debug.LogWarning(string.Format("Stack can only contain Overlay cameras. {0} will skip rendering.", currCamera.name));
-                            continue;
-                        }
-
+                        // Checking if the base and the overlay camera is of the same renderer type.
                         var currCameraRendererType = data?.scriptableRenderer.GetType();
                         if (currCameraRendererType != baseCameraRendererType)
                         {
-                            var renderer2DType = typeof(Renderer2D);
-                            if (currCameraRendererType != renderer2DType && baseCameraRendererType != renderer2DType)
-                            {
-                                Debug.LogWarning(string.Format("Only cameras with compatible renderer types can be stacked. {0} will skip rendering", currCamera.name));
-                                continue;
-                            }
+                            Debug.LogWarning("Only cameras with compatible renderer types can be stacked. " +
+                                             $"The camera: {currCamera.name} are using the renderer {currCameraRendererType.Name}, " +
+                                             $"but the base camera: {baseCamera.name} are using {baseCameraRendererType.Name}. Will skip rendering");
+                            continue;
+                        }
+
+                        var overlayRenderer = data.scriptableRenderer;
+                        // Checking if they are the same renderer type but just not supporting Overlay
+                        if ((overlayRenderer.SupportedCameraStackingTypes() & 1 << (int)CameraRenderType.Overlay) == 0)
+                        {
+                            Debug.LogWarning($"The camera: {currCamera.name} is using a renderer of type {renderer.GetType().Name} which does not support Overlay cameras in it's current state.");
+                            continue;
+                        }
+
+                        if (data == null || data.renderType != CameraRenderType.Overlay)
+                        {
+                            Debug.LogWarning($"Stack can only contain Overlay cameras. The camera: {currCamera.name} " +
+                                             $"has a type {data.renderType} that is not supported. Will skip rendering.");
+                            continue;
                         }
 
                         anyPostProcessingEnabled |= data.renderPostProcessing;
@@ -823,6 +833,28 @@ namespace UnityEngine.Rendering.Universal
             // Scale is only enabled for gameview.
             const float kRenderScaleThreshold = 0.05f;
             cameraData.renderScale = (Mathf.Abs(1.0f - settings.renderScale) < kRenderScaleThreshold) ? 1.0f : settings.renderScale;
+
+            // Convert the upscaling filter selection from the pipeline asset into an image upscaling filter
+            cameraData.upscalingFilter = ResolveUpscalingFilterSelection(new Vector2(cameraData.pixelWidth, cameraData.pixelHeight), cameraData.renderScale, settings.upscalingFilter);
+
+            if (cameraData.renderScale > 1.0f)
+            {
+                cameraData.imageScalingMode = ImageScalingMode.Downscaling;
+            }
+            else if ((cameraData.renderScale < 1.0f) || (cameraData.upscalingFilter == ImageUpscalingFilter.FSR))
+            {
+                // When FSR is enabled, we still consider 100% render scale an upscaling operation.
+                // This allows us to run the FSR shader passes all the time since they improve visual quality even at 100% scale.
+
+                cameraData.imageScalingMode = ImageScalingMode.Upscaling;
+            }
+            else
+            {
+                cameraData.imageScalingMode = ImageScalingMode.None;
+            }
+
+            cameraData.fsrOverrideSharpness = settings.fsrOverrideSharpness;
+            cameraData.fsrSharpness = settings.fsrSharpness;
 
 #if ENABLE_VR && ENABLE_XR_MODULE
             cameraData.xr = m_XRSystem.emptyPass;
@@ -1243,6 +1275,76 @@ namespace UnityEngine.Rendering.Universal
                 cameraData.cameraTargetDescriptor.graphicsFormat = MakeRenderTextureGraphicsFormat(cameraData.isHdrEnabled, true);
                 cameraData.cameraTargetDescriptor.msaaSamples = msaaSamples;
             }
+        }
+
+        /// <summary>
+        /// Returns the best supported image upscaling filter based on the provided upscaling filter selection
+        /// </summary>
+        /// <param name="imageSize">Size of the final image</param>
+        /// <param name="renderScale">Scale being applied to the final image size</param>
+        /// <param name="selection">Upscaling filter selected by the user</param>
+        /// <returns>Either the original filter provided, or the best replacement available</returns>
+        static ImageUpscalingFilter ResolveUpscalingFilterSelection(Vector2 imageSize, float renderScale, UpscalingFilterSelection selection)
+        {
+            // By default we just use linear filtering since it's the most compatible choice
+            ImageUpscalingFilter filter = ImageUpscalingFilter.Linear;
+
+            // Fall back to the automatic filter if FSR was selected, but isn't supported on the current platform
+            if ((selection == UpscalingFilterSelection.FSR) && !FSRUtils.IsSupported())
+            {
+                selection = UpscalingFilterSelection.Auto;
+            }
+
+            switch (selection)
+            {
+                case UpscalingFilterSelection.Auto:
+                {
+                    // The user selected "auto" for their upscaling filter so we should attempt to choose the best filter
+                    // for the current situation. When the current resolution and render scale are compatible with integer
+                    // scaling we use the point sampling filter. Otherwise we just use the default filter (linear).
+                    float pixelScale = (1.0f / renderScale);
+                    bool isIntegerScale = Mathf.Approximately((pixelScale - Mathf.Floor(pixelScale)), 0.0f);
+
+                    if (isIntegerScale)
+                    {
+                        float widthScale = (imageSize.x / pixelScale);
+                        float heightScale = (imageSize.y / pixelScale);
+
+                        bool isImageCompatible = (Mathf.Approximately((widthScale - Mathf.Floor(widthScale)), 0.0f) &&
+                                                  Mathf.Approximately((heightScale - Mathf.Floor(heightScale)), 0.0f));
+
+                        if (isImageCompatible)
+                        {
+                            filter = ImageUpscalingFilter.Point;
+                        }
+                    }
+
+                    break;
+                }
+
+                case UpscalingFilterSelection.Linear:
+                {
+                    // Do nothing since linear is already the default
+
+                    break;
+                }
+
+                case UpscalingFilterSelection.Point:
+                {
+                    filter = ImageUpscalingFilter.Point;
+
+                    break;
+                }
+
+                case UpscalingFilterSelection.FSR:
+                {
+                    filter = ImageUpscalingFilter.FSR;
+
+                    break;
+                }
+            }
+
+            return filter;
         }
 
 #if ADAPTIVE_PERFORMANCE_2_0_0_OR_NEWER
