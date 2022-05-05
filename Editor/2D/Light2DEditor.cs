@@ -42,7 +42,7 @@ namespace UnityEditor.Rendering.Universal
                 for (var i = 0; i < shapeEditor.pointCount; ++i)
                     pointsProperty.GetArrayElementAtIndex(i).vector3Value = shapeEditor.GetPoint(i).position;
 
-                ((Light2D)(serializedObject.targetObject)).UpdateMesh();
+                ((Light2D)(serializedObject.targetObject)).UpdateMesh(true);
 
                 // This is untracked right now...
                 serializedObject.ApplyModifiedProperties();
@@ -815,7 +815,7 @@ namespace UnityEditor.Rendering.Universal
                     if (serializedObject.ApplyModifiedProperties())
                     {
                         if (meshChanged)
-                            lightObject.UpdateMesh();
+                            lightObject.UpdateMesh(true);
                     }
                 }
             }
@@ -824,19 +824,8 @@ namespace UnityEditor.Rendering.Universal
                 EditorGUILayout.HelpBox(Styles.renderPipelineUnassignedWarning);
 
                 if (meshChanged)
-                    lightObject.UpdateMesh();
+                    lightObject.UpdateMesh(true);
             }
-        }
-    }
-
-    internal class Light2DPostProcess : AssetPostprocessor
-    {
-        void OnPostprocessSprites(Texture2D texture, Sprite[] sprites)
-        {
-            var lights = Resources.FindObjectsOfTypeAll<Light2D>().Where(x => x.lightType == Light2D.LightType.Sprite && x.lightCookieSprite == null);
-
-            foreach (var light in lights)
-                light.MarkForUpdate();
         }
     }
 }

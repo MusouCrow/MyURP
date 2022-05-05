@@ -1,4 +1,3 @@
-using System.Diagnostics;
 using UnityEngine.Assertions;
 using UnityEngine.Rendering.Universal.Internal;
 
@@ -311,15 +310,24 @@ namespace UnityEngine.Rendering.Universal
 
         private bool IsAutomaticDBuffer()
         {
-            // As WebGL uses gles here we should not use DBuffer
 #if UNITY_EDITOR
-            if (UnityEditor.EditorUserBuildSettings.selectedBuildTargetGroup == UnityEditor.BuildTargetGroup.WebGL)
-                return false;
+            var selectedBuildTargetGroup = UnityEditor.EditorUserBuildSettings.selectedBuildTargetGroup;
+            if (selectedBuildTargetGroup == UnityEditor.BuildTargetGroup.Standalone)
+                return true;
+            if (selectedBuildTargetGroup == UnityEditor.BuildTargetGroup.GameCoreXboxOne)
+                return true;
+            if (selectedBuildTargetGroup == UnityEditor.BuildTargetGroup.GameCoreXboxSeries)
+                return true;
+            if (selectedBuildTargetGroup == UnityEditor.BuildTargetGroup.PS4)
+                return true;
+            if (selectedBuildTargetGroup == UnityEditor.BuildTargetGroup.PS5)
+                return true;
+            if (selectedBuildTargetGroup == UnityEditor.BuildTargetGroup.WSA)
+                return true;
+            return false;
 #else
-            if (Application.platform == RuntimePlatform.WebGLPlayer)
-                return false;
+            return SystemInfo.deviceType == DeviceType.Desktop || SystemInfo.deviceType == DeviceType.Console;
 #endif
-            return !GraphicsSettings.HasShaderDefine(BuiltinShaderDefine.SHADER_API_MOBILE);
         }
 
         private void RecreateSystemsIfNeeded(ScriptableRenderer renderer, in CameraData cameraData)
@@ -384,10 +392,7 @@ namespace UnityEngine.Rendering.Universal
                     m_ForwardEmissivePass = new DecalForwardEmissivePass(m_DecalDrawForwardEmissiveSystem);
 
                     if (universalRenderer.actualRenderingMode == RenderingMode.Deferred)
-                    {
                         m_DBufferRenderPass.deferredLights = universalRenderer.deferredLights;
-                        m_DBufferRenderPass.deferredLights.DisableFramebufferFetchInput();
-                    }
                     break;
             }
 
@@ -400,8 +405,6 @@ namespace UnityEngine.Rendering.Universal
                 return;
 
             RecreateSystemsIfNeeded(renderer, cameraData);
-
-            ChangeAdaptivePerformanceDrawDistances();
 
             m_DecalEntityManager.Update();
 
@@ -439,8 +442,6 @@ namespace UnityEngine.Rendering.Universal
             }
 
             RecreateSystemsIfNeeded(renderer, renderingData.cameraData);
-
-            ChangeAdaptivePerformanceDrawDistances();
 
             if (intermediateRendering)
             {
@@ -482,10 +483,6 @@ namespace UnityEngine.Rendering.Universal
             }
         }
 
-        internal override bool SupportsNativeRenderPass()
-        {
-            return m_Technique == DecalTechnique.GBuffer || m_Technique == DecalTechnique.ScreenSpace;
-        }
         protected override void Dispose(bool disposing)
         {
             CoreUtils.Destroy(m_CopyDepthMaterial);
@@ -496,24 +493,6 @@ namespace UnityEngine.Rendering.Universal
                 m_DecalEntityManager = null;
                 sharedDecalEntityManager.Release(m_DecalEntityManager);
             }
-        }
-
-        [Conditional("ADAPTIVE_PERFORMANCE_4_0_0_OR_NEWER")]
-        private void ChangeAdaptivePerformanceDrawDistances()
-        {
-#if ADAPTIVE_PERFORMANCE_4_0_0_OR_NEWER
-            if (UniversalRenderPipeline.asset.useAdaptivePerformance)
-            {
-                if (m_DecalCreateDrawCallSystem != null)
-                {
-                    m_DecalCreateDrawCallSystem.maxDrawDistance = AdaptivePerformance.AdaptivePerformanceRenderSettings.DecalsDrawDistance;
-                }
-                if (m_DecalUpdateCullingGroupSystem != null)
-                {
-                    m_DecalUpdateCullingGroupSystem.boundingDistance = AdaptivePerformance.AdaptivePerformanceRenderSettings.DecalsDrawDistance;
-                }
-            }
-#endif
         }
     }
 }

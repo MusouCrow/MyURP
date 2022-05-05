@@ -43,20 +43,6 @@ namespace UnityEngine.Rendering.Universal
             public static readonly ProfilingSampler createCameraRenderTarget = new ProfilingSampler($"{k_Name}.{nameof(CreateCameraRenderTarget)}");
         }
 
-        /// <inheritdoc/>
-        public override int SupportedCameraStackingTypes()
-        {
-            switch (m_RenderingMode)
-            {
-                case RenderingMode.Forward:
-                    return 1 << (int)CameraRenderType.Base | 1 << (int)CameraRenderType.Overlay;
-                case RenderingMode.Deferred:
-                    return 1 << (int)CameraRenderType.Base;
-                default:
-                    return 0;
-            }
-        }
-
         // Rendering mode setup from UI.
         internal RenderingMode renderingMode => m_RenderingMode;
 
@@ -288,7 +274,10 @@ namespace UnityEngine.Rendering.Universal
             m_DepthInfoTexture.Init("_DepthInfoTexture");
             m_TileDepthInfoTexture.Init("_TileDepthInfoTexture");
 
-            supportedRenderingFeatures = new RenderingFeatures();
+            supportedRenderingFeatures = new RenderingFeatures()
+            {
+                cameraStacking = true,
+            };
 
             if (this.renderingMode == RenderingMode.Deferred)
             {
@@ -414,7 +403,7 @@ namespace UnityEngine.Rendering.Universal
 
             // Assign the camera color target early in case it is needed during AddRenderPasses.
             bool isPreviewCamera = cameraData.isPreviewCamera;
-            var createColorTexture = (rendererFeatures.Count != 0 && m_IntermediateTextureMode == IntermediateTextureMode.Always) && !isPreviewCamera;
+            var createColorTexture = m_IntermediateTextureMode == IntermediateTextureMode.Always && !isPreviewCamera;
             if (createColorTexture)
             {
                 m_ActiveCameraColorAttachment = m_ColorBufferSystem.GetBackBuffer();
@@ -549,11 +538,9 @@ namespace UnityEngine.Rendering.Universal
             if (cameraData.renderType == CameraRenderType.Base)
             {
                 RenderTargetHandle cameraTargetHandle = RenderTargetHandle.GetCameraTarget(cameraData.xr);
-                bool sceneViewFilterEnabled = camera.sceneViewFilterMode == Camera.SceneViewFilterMode.ShowFiltered;
 
-                //Scene filtering redraws the objects on top of the resulting frame. It has to draw directly to the sceneview buffer.
-                m_ActiveCameraColorAttachment = (createColorTexture && !sceneViewFilterEnabled) ? m_ColorBufferSystem.GetBackBuffer() : cameraTargetHandle;
-                m_ActiveCameraDepthAttachment = (createDepthTexture && !sceneViewFilterEnabled) ? m_CameraDepthAttachment : cameraTargetHandle;
+                m_ActiveCameraColorAttachment = (createColorTexture) ? m_ColorBufferSystem.GetBackBuffer() : cameraTargetHandle;
+                m_ActiveCameraDepthAttachment = (createDepthTexture) ? m_CameraDepthAttachment : cameraTargetHandle;
 
                 bool intermediateRenderTexture = createColorTexture || createDepthTexture;
 
@@ -783,16 +770,10 @@ namespace UnityEngine.Rendering.Universal
             }
             EnqueuePass(m_OnRenderObjectCallbackPass);
 
-            bool hasCaptureActions = renderingData.cameraData.captureActions != null && lastCameraInTheStack;
 
-            // When FXAA or scaling is active, we must perform an additional pass at the end of the frame for the following reasons:
-            // 1. FXAA expects to be the last shader running on the image before it's presented to the screen. Since users are allowed
-            //    to add additional render passes after post processing occurs, we can't run FXAA until all of those passes complete as well.
-            //    The FinalPost pass is guaranteed to execute after user authored passes so FXAA is always run inside of it.
-            // 2. UberPost can only handle upscaling with linear filtering. All other filtering methods require the FinalPost pass.
+            bool hasCaptureActions = renderingData.cameraData.captureActions != null && lastCameraInTheStack;
             bool applyFinalPostProcessing = anyPostProcessing && lastCameraInTheStack &&
-                ((renderingData.cameraData.antialiasing == AntialiasingMode.FastApproximateAntialiasing) ||
-                 ((renderingData.cameraData.imageScalingMode == ImageScalingMode.Upscaling) && (renderingData.cameraData.upscalingFilter != ImageUpscalingFilter.Linear)));
+                renderingData.cameraData.antialiasing == AntialiasingMode.FastApproximateAntialiasing;
 
             // When post-processing is enabled we can use the stack to resolve rendering to camera target (screen or RT).
             // However when there are render passes executing after post we avoid resolving to screen so rendering continues (before sRGBConvertion etc)
@@ -805,9 +786,9 @@ namespace UnityEngine.Rendering.Universal
                 // Post-processing will resolve to final target. No need for final blit pass.
                 if (applyPostProcessing)
                 {
-                    // if resolving to screen we need to be able to perform sRGBConversion in post-processing if necessary
-                    bool doSRGBConversion = resolvePostProcessingToCameraTarget;
-                    postProcessPass.Setup(cameraTargetDescriptor, m_ActiveCameraColorAttachment, resolvePostProcessingToCameraTarget, m_ActiveCameraDepthAttachment, colorGradingLut, applyFinalPostProcessing, doSRGBConversion, hasPassesAfterPostProcessing);
+                    // if resolving to screen we need to be able to perform sRGBConvertion in post-processing if necessary
+                    bool doSRGBConvertion = resolvePostProcessingToCameraTarget;
+                    postProcessPass.Setup(cameraTargetDescriptor, m_ActiveCameraColorAttachment, resolvePostProcessingToCameraTarget, m_ActiveCameraDepthAttachment, colorGradingLut, applyFinalPostProcessing, doSRGBConvertion);
                     EnqueuePass(postProcessPass);
                 }
 
@@ -816,7 +797,7 @@ namespace UnityEngine.Rendering.Universal
                 // Do FXAA or any other final post-processing effect that might need to run after AA.
                 if (applyFinalPostProcessing)
                 {
-                    finalPostProcessPass.SetupFinalPass(sourceForFinalPass, true, hasPassesAfterPostProcessing);
+                    finalPostProcessPass.SetupFinalPass(sourceForFinalPass, true);
                     EnqueuePass(finalPostProcessPass);
                 }
 
@@ -861,14 +842,15 @@ namespace UnityEngine.Rendering.Universal
             // stay in RT so we resume rendering on stack after post-processing
             else if (applyPostProcessing)
             {
-                postProcessPass.Setup(cameraTargetDescriptor, m_ActiveCameraColorAttachment, false, m_ActiveCameraDepthAttachment, colorGradingLut, false, false, true);
+                postProcessPass.Setup(cameraTargetDescriptor, m_ActiveCameraColorAttachment, false, m_ActiveCameraDepthAttachment, colorGradingLut, false, false);
                 EnqueuePass(postProcessPass);
             }
 
 #if UNITY_EDITOR
-            if (isSceneViewCamera || (isGizmosEnabled && lastCameraInTheStack))
+            if (isSceneViewCamera || isGizmosEnabled)
             {
                 // Scene view camera should always resolve target (not stacked)
+                Assertions.Assert.IsTrue(lastCameraInTheStack, "Editor camera must resolve target upon finish rendering.");
                 m_FinalDepthCopyPass.Setup(m_DepthTexture, RenderTargetHandle.CameraTarget);
                 m_FinalDepthCopyPass.MssaSamples = 0;
                 EnqueuePass(m_FinalDepthCopyPass);
@@ -1034,11 +1016,6 @@ namespace UnityEngine.Rendering.Universal
             return inputSummary;
         }
 
-        bool IsGLESDevice()
-        {
-            return SystemInfo.graphicsDeviceType == GraphicsDeviceType.OpenGLES2 || SystemInfo.graphicsDeviceType == GraphicsDeviceType.OpenGLES3;
-        }
-
         void CreateCameraRenderTarget(ScriptableRenderContext context, ref RenderTextureDescriptor descriptor, bool primedDepth)
         {
             CommandBuffer cmd = CommandBufferPool.Get();
@@ -1070,13 +1047,7 @@ namespace UnityEngine.Rendering.Universal
                     var depthDescriptor = descriptor;
                     depthDescriptor.useMipMap = false;
                     depthDescriptor.autoGenerateMips = false;
-
-                    depthDescriptor.bindMS = depthDescriptor.msaaSamples > 1 && (SystemInfo.supportsMultisampledTextures != 0);
-
-                    // binding MS surfaces is not supported by the GLES backend, and it won't be fixed after investigating
-                    // the high performance impact of potential fixes, which would make it more expensive than depth prepass (fogbugz 1339401 for more info)
-                    if (IsGLESDevice())
-                        depthDescriptor.bindMS = false;
+                    depthDescriptor.bindMS = depthDescriptor.msaaSamples > 1 && !SystemInfo.supportsMultisampleAutoResolve && (SystemInfo.supportsMultisampledTextures != 0);
 
                     depthDescriptor.colorFormat = RenderTextureFormat.Depth;
                     depthDescriptor.depthBufferBits = k_DepthStencilBufferBits;
@@ -1128,7 +1099,7 @@ namespace UnityEngine.Rendering.Universal
             bool isSceneViewCamera = cameraData.isSceneViewCamera;
             var cameraTargetDescriptor = cameraData.cameraTargetDescriptor;
             int msaaSamples = cameraTargetDescriptor.msaaSamples;
-            bool isScaledRender = cameraData.imageScalingMode != ImageScalingMode.None;
+            bool isScaledRender = !Mathf.Approximately(cameraData.renderScale, 1.0f);
             bool isCompatibleBackbufferTextureDimension = cameraTargetDescriptor.dimension == TextureDimension.Tex2D;
             bool requiresExplicitMsaaResolve = msaaSamples > 1 && PlatformRequiresExplicitMsaaResolve();
             bool isOffscreenRender = cameraData.targetTexture != null && !isSceneViewCamera;
@@ -1160,8 +1131,8 @@ namespace UnityEngine.Rendering.Universal
             bool msaaDepthResolve = msaaEnabledForCamera && SystemInfo.supportsMultisampledTextures != 0;
 
             // copying depth on GLES3 is giving invalid results. Needs investigation (Fogbugz issue 1339401)
-            if (IsGLESDevice())
-                return false;
+            if (SystemInfo.graphicsDeviceType == GraphicsDeviceType.OpenGLES3)
+                msaaDepthResolve = false;
 
             return supportsDepthCopy || msaaDepthResolve;
         }

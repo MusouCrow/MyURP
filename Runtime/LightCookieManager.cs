@@ -595,7 +595,6 @@ namespace UnityEngine.Rendering.Universal
 
         private LightCookieShaderFormat GetLightCookieShaderFormat(GraphicsFormat cookieFormat)
         {
-            // TODO: convert this to use GraphicsFormatUtility
             switch (cookieFormat)
             {
                 default:
@@ -617,10 +616,6 @@ namespace UnityEngine.Rendering.Universal
                 case GraphicsFormat.R32_UInt:
                 case GraphicsFormat.R32_SInt:
                 case GraphicsFormat.R32_SFloat:
-                case GraphicsFormat.R_BC4_SNorm:
-                case GraphicsFormat.R_BC4_UNorm:
-                case GraphicsFormat.R_EAC_SNorm:
-                case GraphicsFormat.R_EAC_UNorm:
                     return LightCookieShaderFormat.Red;
             }
         }

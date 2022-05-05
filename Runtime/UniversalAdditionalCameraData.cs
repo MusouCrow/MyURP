@@ -351,7 +351,7 @@ namespace UnityEngine.Rendering.Universal
 
         /// <summary>
         /// Returns the camera stack. Only valid for Base cameras.
-        /// Will return null if it is not a Base camera.
+        /// Overlay cameras have no stack and will return null.
         /// <seealso cref="CameraRenderType"/>.
         /// </summary>
         public List<Camera> cameraStack
@@ -365,7 +365,7 @@ namespace UnityEngine.Rendering.Universal
                     return null;
                 }
 
-                if (!scriptableRenderer.SupportsCameraStackingType(CameraRenderType.Base))
+                if (scriptableRenderer.supportedRenderingFeatures.cameraStacking == false)
                 {
                     var camera = gameObject.GetComponent<Camera>();
                     Debug.LogWarning(string.Format("{0}: This camera has a ScriptableRenderer that doesn't support camera stacking. Camera stack is null.", camera.name));

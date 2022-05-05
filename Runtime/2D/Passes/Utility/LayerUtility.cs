@@ -69,8 +69,7 @@ namespace UnityEngine.Rendering.Universal
             foreach (var light in lightCullResult.visibleLights)
             {
                 // If the lit layers are different, or if they are lit but this is a shadow casting light then don't batch.
-                bool lightCastsShadows = (light.lightType != Light2D.LightType.Global && light.shadowsEnabled);
-                if ((light.IsLitLayer(layerId1) != light.IsLitLayer(layerId2)) || (light.IsLitLayer(layerId1) && lightCastsShadows))
+                if ((light.IsLitLayer(layerId1) != light.IsLitLayer(layerId2)) || (light.IsLitLayer(layerId1) && light.shadowsEnabled))
                     return false;
             }
             return true;

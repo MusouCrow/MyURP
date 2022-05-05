@@ -67,14 +67,10 @@ namespace UnityEngine.Rendering.Universal.Internal
                     // Normal buffer may have already been created if there was a depthNormal prepass before.
                     // DepthNormal prepass is needed for forward-only materials when SSAO is generated between gbuffer and deferred lighting pass.
                     if (i == m_DeferredLights.GBufferNormalSmoothnessIndex && m_DeferredLights.HasNormalPrepass)
-                    {
-                        if (m_DeferredLights.UseRenderPass)
-                            m_DeferredLights.DeferredInputIsTransient[i] = false;
                         continue;
-                    }
 
                     // No need to setup temporaryRTs if we are using input attachments as they will be Memoryless
-                    if (m_DeferredLights.UseRenderPass && i != m_DeferredLights.GBufferShadowMask && i != m_DeferredLights.GBufferRenderingLayers && (i != m_DeferredLights.GbufferDepthIndex && !m_DeferredLights.HasDepthPrepass))
+                    if (m_DeferredLights.UseRenderPass && i != m_DeferredLights.GBufferShadowMask && i != m_DeferredLights.GBufferRenderingLayers)
                         continue;
 
                     RenderTextureDescriptor gbufferSlice = cameraTextureDescriptor;
@@ -128,7 +124,9 @@ namespace UnityEngine.Rendering.Universal.Internal
                 RenderingUtils.RenderObjectsWithError(context, ref renderingData.cullResults, camera, m_FilteringSettings, SortingCriteria.None);
 
                 // If any sub-system needs camera normal texture, make it available.
-                gbufferCommands.SetGlobalTexture(s_CameraNormalsTextureID, m_DeferredLights.GbufferAttachmentIdentifiers[m_DeferredLights.GBufferNormalSmoothnessIndex]);
+                // Input attachments will only be used when this is not needed so safe to skip in that case
+                if (!m_DeferredLights.UseRenderPass)
+                    gbufferCommands.SetGlobalTexture(s_CameraNormalsTextureID, m_DeferredLights.GbufferAttachmentIdentifiers[m_DeferredLights.GBufferNormalSmoothnessIndex]);
             }
 
             context.ExecuteCommandBuffer(gbufferCommands);

@@ -31,7 +31,7 @@ Shader "Hidden/Universal Render Pipeline/ScreenSpaceAmbientOcclusion"
             output.positionCS = float4(input.positionHCS.xyz, 1.0);
 
             #if UNITY_UV_STARTS_AT_TOP
-            output.positionCS.y *= _ScaleBiasRt.x;
+            output.positionCS.y *= -1;
             #endif
 
             output.uv = input.uv;
