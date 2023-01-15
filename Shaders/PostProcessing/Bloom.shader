@@ -14,7 +14,6 @@ Shader "Hidden/Universal Render Pipeline/Bloom"
         float4 _SourceTex_TexelSize;
         TEXTURE2D_X(_SourceTexLowMip);
         float4 _SourceTexLowMip_TexelSize;
-        TEXTURE2D_X(_BloomTexture);
 
         float4 _Params; // x: scatter, y: clamp, z: threshold (linear), w: threshold knee
 
@@ -85,8 +84,6 @@ Shader "Hidden/Universal Render Pipeline/Bloom"
             half3 color = SAMPLE_TEXTURE2D_X(_SourceTex, sampler_LinearClamp, uv).xyz;
         #endif
 
-            half additive = SAMPLE_TEXTURE2D_X(_BloomTexture, sampler_LinearClamp, uv);
-
             // User controlled clamp to limit crazy high broken spec
             color = min(ClampMax, color);
 
@@ -95,7 +92,7 @@ Shader "Hidden/Universal Render Pipeline/Bloom"
             half softness = clamp(brightness - Threshold + ThresholdKnee, 0.0, 2.0 * ThresholdKnee);
             softness = (softness * softness) / (4.0 * ThresholdKnee + 1e-4);
             half multiplier = max(brightness - Threshold, softness) / max(brightness, 1e-4);
-            color *= multiplier + additive;
+            color *= multiplier;
 
             // Clamp colors to positive once in prefilter. Encode can have a sqrt, and sqrt(-x) == NaN. Up/Downsample passes would then spread the NaN.
             color = max(color, 0);

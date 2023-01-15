@@ -1,5 +1,9 @@
+using System.Diagnostics;
 using UnityEngine.Assertions;
 using UnityEngine.Rendering.Universal.Internal;
+#if UNITY_EDITOR
+using ShaderKeywordFilter = UnityEditor.ShaderKeywordFilter;
+#endif
 
 namespace UnityEngine.Rendering.Universal
 {
@@ -35,6 +39,12 @@ namespace UnityEngine.Rendering.Universal
     [System.Serializable]
     internal class DBufferSettings
     {
+#if UNITY_EDITOR
+        // TODO: Either add a disabled item in DecalNormalBlend or make m_DBufferSettings nullable for correct filtering
+        //[ShaderKeywordFilter.SelectIf(DecalSurfaceData.Albedo, overridePriority: true, keywordNames: ShaderKeywordStrings.DBufferMRT1)]
+        //[ShaderKeywordFilter.SelectIf(DecalSurfaceData.AlbedoNormal, overridePriority: true, keywordNames: ShaderKeywordStrings.DBufferMRT2)]
+        //[ShaderKeywordFilter.SelectIf(DecalSurfaceData.AlbedoNormalMAOS, overridePriority: true, keywordNames: ShaderKeywordStrings.DBufferMRT3)]
+#endif
         public DecalSurfaceData surfaceData = DecalSurfaceData.AlbedoNormalMAOS;
     }
 
@@ -51,6 +61,12 @@ namespace UnityEngine.Rendering.Universal
     [System.Serializable]
     internal class DecalScreenSpaceSettings
     {
+#if UNITY_EDITOR
+        // TODO: Either add a disabled item in DecalNormalBlend or make m_ScreenSpaceSettings nullable for correct filtering
+        //[ShaderKeywordFilter.SelectIf(DecalNormalBlend.Low, overridePriority: true, keywordNames: ShaderKeywordStrings.DecalNormalBlendLow)]
+        //[ShaderKeywordFilter.SelectIf(DecalNormalBlend.Medium, overridePriority: true, keywordNames: ShaderKeywordStrings.DecalNormalBlendMedium)]
+        //[ShaderKeywordFilter.SelectIf(DecalNormalBlend.High, overridePriority: true, keywordNames: ShaderKeywordStrings.DecalNormalBlendHigh)]
+#endif
         public DecalNormalBlend normalBlend = DecalNormalBlend.Low;
         public bool useGBuffer = true;
     }
@@ -310,24 +326,15 @@ namespace UnityEngine.Rendering.Universal
 
         private bool IsAutomaticDBuffer()
         {
+            // As WebGL uses gles here we should not use DBuffer
 #if UNITY_EDITOR
-            var selectedBuildTargetGroup = UnityEditor.EditorUserBuildSettings.selectedBuildTargetGroup;
-            if (selectedBuildTargetGroup == UnityEditor.BuildTargetGroup.Standalone)
-                return true;
-            if (selectedBuildTargetGroup == UnityEditor.BuildTargetGroup.GameCoreXboxOne)
-                return true;
-            if (selectedBuildTargetGroup == UnityEditor.BuildTargetGroup.GameCoreXboxSeries)
-                return true;
-            if (selectedBuildTargetGroup == UnityEditor.BuildTargetGroup.PS4)
-                return true;
-            if (selectedBuildTargetGroup == UnityEditor.BuildTargetGroup.PS5)
-                return true;
-            if (selectedBuildTargetGroup == UnityEditor.BuildTargetGroup.WSA)
-                return true;
-            return false;
+            if (UnityEditor.EditorUserBuildSettings.selectedBuildTargetGroup == UnityEditor.BuildTargetGroup.WebGL)
+                return false;
 #else
-            return SystemInfo.deviceType == DeviceType.Desktop || SystemInfo.deviceType == DeviceType.Console;
+            if (Application.platform == RuntimePlatform.WebGLPlayer)
+                return false;
 #endif
+            return !GraphicsSettings.HasShaderDefine(BuiltinShaderDefine.SHADER_API_MOBILE);
         }
 
         private void RecreateSystemsIfNeeded(ScriptableRenderer renderer, in CameraData cameraData)
@@ -392,7 +399,10 @@ namespace UnityEngine.Rendering.Universal
                     m_ForwardEmissivePass = new DecalForwardEmissivePass(m_DecalDrawForwardEmissiveSystem);
 
                     if (universalRenderer.actualRenderingMode == RenderingMode.Deferred)
+                    {
                         m_DBufferRenderPass.deferredLights = universalRenderer.deferredLights;
+                        m_DBufferRenderPass.deferredLights.DisableFramebufferFetchInput();
+                    }
                     break;
             }
 
@@ -405,6 +415,8 @@ namespace UnityEngine.Rendering.Universal
                 return;
 
             RecreateSystemsIfNeeded(renderer, cameraData);
+
+            ChangeAdaptivePerformanceDrawDistances();
 
             m_DecalEntityManager.Update();
 
@@ -443,6 +455,8 @@ namespace UnityEngine.Rendering.Universal
 
             RecreateSystemsIfNeeded(renderer, renderingData.cameraData);
 
+            ChangeAdaptivePerformanceDrawDistances();
+
             if (intermediateRendering)
             {
                 m_DecalUpdateCulledSystem.Execute();
@@ -473,8 +487,8 @@ namespace UnityEngine.Rendering.Universal
                             new RenderTargetHandle(m_DBufferRenderPass.cameraDepthTextureIndentifier),
                             new RenderTargetHandle(m_DBufferRenderPass.dBufferDepthIndentifier)
                         );
+                        m_CopyDepthPass.MssaSamples = 1;
                     }
-                    m_CopyDepthPass.MssaSamples = 1;
 
                     renderer.EnqueuePass(m_CopyDepthPass);
                     renderer.EnqueuePass(m_DBufferRenderPass);
@@ -483,6 +497,10 @@ namespace UnityEngine.Rendering.Universal
             }
         }
 
+        internal override bool SupportsNativeRenderPass()
+        {
+            return m_Technique == DecalTechnique.GBuffer || m_Technique == DecalTechnique.ScreenSpace;
+        }
         protected override void Dispose(bool disposing)
         {
             CoreUtils.Destroy(m_CopyDepthMaterial);
@@ -493,6 +511,24 @@ namespace UnityEngine.Rendering.Universal
                 m_DecalEntityManager = null;
                 sharedDecalEntityManager.Release(m_DecalEntityManager);
             }
+        }
+
+        [Conditional("ADAPTIVE_PERFORMANCE_4_0_0_OR_NEWER")]
+        private void ChangeAdaptivePerformanceDrawDistances()
+        {
+#if ADAPTIVE_PERFORMANCE_4_0_0_OR_NEWER
+            if (UniversalRenderPipeline.asset.useAdaptivePerformance)
+            {
+                if (m_DecalCreateDrawCallSystem != null)
+                {
+                    m_DecalCreateDrawCallSystem.maxDrawDistance = AdaptivePerformance.AdaptivePerformanceRenderSettings.DecalsDrawDistance;
+                }
+                if (m_DecalUpdateCullingGroupSystem != null)
+                {
+                    m_DecalUpdateCullingGroupSystem.boundingDistance = AdaptivePerformance.AdaptivePerformanceRenderSettings.DecalsDrawDistance;
+                }
+            }
+#endif
         }
     }
 }

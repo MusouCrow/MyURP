@@ -252,20 +252,22 @@ namespace UnityEditor.Rendering.Universal
             Shader m_Shader;
             ShaderKeywordSet m_KeywordSet;
             ShaderSnippetData m_SnippetData;
+            ShaderCompilerPlatform m_ShaderCompilerPlatform;
             bool m_stripUnusedVariants;
 
-            public StripTool(T features, Shader shader, ShaderSnippetData snippetData, in ShaderKeywordSet keywordSet, bool stripUnusedVariants)
+            public StripTool(T features, Shader shader, ShaderSnippetData snippetData, in ShaderKeywordSet keywordSet, bool stripUnusedVariants, ShaderCompilerPlatform shaderCompilerPlatform)
             {
                 m_Features = features;
                 m_Shader = shader;
                 m_SnippetData = snippetData;
                 m_KeywordSet = keywordSet;
                 m_stripUnusedVariants = stripUnusedVariants;
+                m_ShaderCompilerPlatform = shaderCompilerPlatform;
             }
 
             bool ContainsKeyword(in LocalKeyword kw)
             {
-                return ShaderUtil.PassHasKeyword(m_Shader, m_SnippetData.pass, kw, m_SnippetData.shaderType);
+                return ShaderUtil.PassHasKeyword(m_Shader, m_SnippetData.pass, kw, m_SnippetData.shaderType, m_ShaderCompilerPlatform);
             }
 
             public bool StripMultiCompileKeepOffVariant(in LocalKeyword kw, T feature, in LocalKeyword kw2, T feature2, in LocalKeyword kw3, T feature3)
@@ -349,6 +351,21 @@ namespace UnityEditor.Rendering.Universal
             {
                 stripDebugDisplayShaders = true;
             }
+
+            // XRTODO: We need to figure out what's the proper way to detect HL target platform when building. For now, HL is the only XR platform available on WSA so we assume this case targets HL platform.
+            var wsaTargetSettings = XRGeneralSettingsPerBuildTarget.XRGeneralSettingsForBuildTarget(BuildTargetGroup.WSA);
+            if (wsaTargetSettings != null && wsaTargetSettings.AssignedSettings != null && wsaTargetSettings.AssignedSettings.activeLoaders.Count > 0)
+            {
+                // Due to the performance consideration, keep addtional light off variant to avoid extra ALU cost related to dummy additional light handling.
+                features |= ShaderFeatures.AdditionalLightsKeepOffVariants;
+            }
+
+            var questTargetSettings = XRGeneralSettingsPerBuildTarget.XRGeneralSettingsForBuildTarget(BuildTargetGroup.Android);
+            if (questTargetSettings != null && questTargetSettings.AssignedSettings != null && questTargetSettings.AssignedSettings.activeLoaders.Count > 0)
+            {
+                // Due to the performance consideration, keep addtional light off variant to avoid extra ALU cost related to dummy additional light handling.
+                features |= ShaderFeatures.AdditionalLightsKeepOffVariants;
+            }
 #endif
 
             if (stripDebugDisplayShaders && compilerData.shaderKeywordSet.IsEnabled(m_DebugDisplay))
@@ -357,7 +374,7 @@ namespace UnityEditor.Rendering.Universal
             }
 
             var stripUnusedVariants = UniversalRenderPipelineGlobalSettings.instance?.stripUnusedVariants == true;
-            var stripTool = new StripTool<ShaderFeatures>(features, shader, snippetData, compilerData.shaderKeywordSet, stripUnusedVariants);
+            var stripTool = new StripTool<ShaderFeatures>(features, shader, snippetData, compilerData.shaderKeywordSet, stripUnusedVariants, compilerData.shaderCompilerPlatform);
 
             // strip main light shadows, cascade and screen variants
             if (IsFeatureEnabled(ShaderFeatures.ShadowsKeepOffVariants, features))
@@ -430,7 +447,7 @@ namespace UnityEditor.Rendering.Universal
                 return true;
 
             // Shadow caster punctual light strip
-            if (snippetData.passType == PassType.ShadowCaster && ShaderUtil.PassHasKeyword(shader, snippetData.pass, m_CastingPunctualLightShadow, snippetData.shaderType))
+            if (snippetData.passType == PassType.ShadowCaster && ShaderUtil.PassHasKeyword(shader, snippetData.pass, m_CastingPunctualLightShadow, snippetData.shaderType, compilerData.shaderCompilerPlatform))
             {
                 if (!IsFeatureEnabled(features, ShaderFeatures.AdditionalLightShadows) && compilerData.shaderKeywordSet.IsEnabled(m_CastingPunctualLightShadow))
                     return true;
@@ -509,7 +526,7 @@ namespace UnityEditor.Rendering.Universal
         bool StripVolumeFeatures(VolumeFeatures features, Shader shader, ShaderSnippetData snippetData, ShaderCompilerData compilerData)
         {
             var stripUnusedVariants = UniversalRenderPipelineGlobalSettings.instance?.stripUnusedVariants == true;
-            var stripTool = new StripTool<VolumeFeatures>(features, shader, snippetData, compilerData.shaderKeywordSet, stripUnusedVariants);
+            var stripTool = new StripTool<VolumeFeatures>(features, shader, snippetData, compilerData.shaderKeywordSet, stripUnusedVariants, compilerData.shaderCompilerPlatform);
 
             if (stripTool.StripMultiCompileKeepOffVariant(m_LensDistortion, VolumeFeatures.LensDistortion))
                 return true;
@@ -795,6 +812,7 @@ namespace UnityEditor.Rendering.Universal
             var activeBuildTargetGroup = BuildPipeline.GetBuildTargetGroup(buildTarget);
             var activeBuildTargetGroupName = activeBuildTargetGroup.ToString();
 
+            bool allQualityLevelsAreOverridden = true;
             for (int i = 0; i < property.arraySize; i++)
             {
                 bool isExcluded = false;
@@ -815,7 +833,18 @@ namespace UnityEditor.Rendering.Universal
                 }
 
                 if (!isExcluded)
-                    urps.Add(QualitySettings.GetRenderPipelineAssetAt(i) as UniversalRenderPipelineAsset);
+                {
+                    if(QualitySettings.GetRenderPipelineAssetAt(i) is UniversalRenderPipelineAsset urpAsset)
+                        urps.Add(urpAsset);
+                    else
+                       allQualityLevelsAreOverridden = false;
+                }
+            }
+
+            if (!allQualityLevelsAreOverridden || urps.Count == 0)
+            {
+                if (GraphicsSettings.defaultRenderPipeline is UniversalRenderPipelineAsset urpAsset)
+                    urps.Add(urpAsset);
             }
 
             return true;
@@ -824,16 +853,26 @@ namespace UnityEditor.Rendering.Universal
         private static void FetchAllSupportedFeatures()
         {
             List<UniversalRenderPipelineAsset> urps = new List<UniversalRenderPipelineAsset>();
-            urps.Add(GraphicsSettings.defaultRenderPipeline as UniversalRenderPipelineAsset);
 
             // TODO: Replace once we have official API for filtering urps per build target
             if (!TryGetRenderPipelineAssetsForBuildTarget(EditorUserBuildSettings.activeBuildTarget, urps))
             {
                 // Fallback
                 Debug.LogWarning("Shader stripping per enabled quality levels failed! Stripping will use all quality levels. Please report a bug!");
+
+                bool allQualityLevelsAreOverridden = true;
                 for (int i = 0; i < QualitySettings.names.Length; i++)
                 {
-                    urps.Add(QualitySettings.GetRenderPipelineAssetAt(i) as UniversalRenderPipelineAsset);
+                    if(QualitySettings.GetRenderPipelineAssetAt(i) is UniversalRenderPipelineAsset urpAsset)
+                        urps.Add(urpAsset);
+                    else
+                        allQualityLevelsAreOverridden = false;
+                }
+
+                if (!allQualityLevelsAreOverridden || urps.Count == 0)
+                {
+                    if(GraphicsSettings.defaultRenderPipeline is UniversalRenderPipelineAsset defaultAsset)
+                        urps.Add(defaultAsset);
                 }
             }
 

@@ -53,7 +53,6 @@ namespace UnityEngine.Rendering.Universal.Internal
         bool m_UseRGBM;
         readonly GraphicsFormat m_SMAAEdgeFormat;
         readonly GraphicsFormat m_GaussianCoCFormat;
-        Matrix4x4[] m_PrevViewProjM = new Matrix4x4[2];
         bool m_ResetHistory;
         int m_DitheringTextureIndex;
         RenderTargetIdentifier[] m_MRT2;
@@ -541,6 +540,7 @@ namespace UnityEngine.Rendering.Universal.Internal
                 RenderTargetHandle cameraTargetHandle = RenderTargetHandle.GetCameraTarget(cameraData.xr);
                 RenderTargetIdentifier cameraTarget = (cameraData.targetTexture != null && !cameraData.xr.enabled) ? new RenderTargetIdentifier(cameraData.targetTexture) : cameraTargetHandle.Identifier();
 
+                // With camera stacking we not always resolve post to final screen as we might run post-processing in the middle of the stack.
                 if (m_UseSwapBuffer)
                 {
                     cameraTarget = (m_ResolveToScreen) ? cameraTarget : targetDestination;
@@ -550,9 +550,6 @@ namespace UnityEngine.Rendering.Universal.Internal
                     cameraTarget = (m_Destination == RenderTargetHandle.CameraTarget) ? cameraTarget : m_Destination.Identifier();
                     m_ResolveToScreen = cameraData.resolveFinalTarget || (m_Destination == cameraTargetHandle || m_HasFinalPass == true);
                 }
-
-                // With camera stacking we not always resolve post to final screen as we might run post-processing in the middle of the stack.
-                bool finishPostProcessOnScreen = m_ResolveToScreen;
 
 #if ENABLE_VR && ENABLE_XR_MODULE
                 if (cameraData.xr.enabled)
@@ -575,7 +572,7 @@ namespace UnityEngine.Rendering.Universal.Internal
                     // For now, when render post - processing in the middle of the camera stack(not resolving to screen)
                     // we do an extra blit to ping pong results back to color texture. In future we should allow a Swap of the current active color texture
                     // in the pipeline to avoid this extra blit.
-                    if (!finishPostProcessOnScreen && !m_UseSwapBuffer)
+                    if (!m_ResolveToScreen && !m_UseSwapBuffer)
                     {
                         cmd.SetGlobalTexture(ShaderPropertyId.sourceTex, cameraTarget);
                         cmd.SetRenderTarget(new RenderTargetIdentifier(m_Source, 0, CubemapFace.Unknown, -1),
@@ -593,7 +590,7 @@ namespace UnityEngine.Rendering.Universal.Internal
                     cameraData.renderer.ConfigureCameraTarget(cameraTarget, cameraTarget);
                     cmd.SetViewProjectionMatrices(Matrix4x4.identity, Matrix4x4.identity);
 
-                    if ((m_Destination == RenderTargetHandle.CameraTarget && !m_UseSwapBuffer) || m_ResolveToScreen)
+                    if ((m_Destination == RenderTargetHandle.CameraTarget && !m_UseSwapBuffer) || (m_ResolveToScreen && m_UseSwapBuffer))
                         cmd.SetViewport(cameraData.pixelRect);
 
                     cmd.DrawMesh(RenderingUtils.fullscreenMesh, Matrix4x4.identity, m_Materials.uber);
@@ -602,7 +599,7 @@ namespace UnityEngine.Rendering.Universal.Internal
                     // For now, when render post-processing in the middle of the camera stack (not resolving to screen)
                     // we do an extra blit to ping pong results back to color texture. In future we should allow a Swap of the current active color texture
                     // in the pipeline to avoid this extra blit.
-                    if (!finishPostProcessOnScreen && !m_UseSwapBuffer)
+                    if (!m_ResolveToScreen && !m_UseSwapBuffer)
                     {
                         cmd.SetGlobalTexture(ShaderPropertyId.sourceTex, cameraTarget);
                         cmd.SetRenderTarget(m_Source, RenderBufferLoadAction.DontCare, RenderBufferStoreAction.Store, RenderBufferLoadAction.DontCare, RenderBufferStoreAction.DontCare);
@@ -626,8 +623,6 @@ namespace UnityEngine.Rendering.Universal.Internal
 
                 if (tempTarget2Used)
                     cmd.ReleaseTemporaryRT(ShaderConstants._TempTarget2);
-
-                cmd.ReleaseTemporaryRT(m_InternalLut.id);
             }
         }
 
@@ -952,7 +947,7 @@ namespace UnityEngine.Rendering.Universal.Internal
             gpuView.SetColumn(3, new Vector4(0, 0, 0, 1));
             var gpuVP = gpuNonJitteredProj * camera.worldToCameraMatrix;
 
-            LensFlareCommonSRP.DoLensFlareDataDrivenCommon(m_Materials.lensFlareDataDriven, LensFlareCommonSRP.Instance, camera, (float)Screen.width, (float)Screen.height,
+            LensFlareCommonSRP.DoLensFlareDataDrivenCommon(m_Materials.lensFlareDataDriven, LensFlareCommonSRP.Instance, camera, (float)m_Descriptor.width, (float)m_Descriptor.height,
                 usePanini, paniniDistance, paniniCropToFit,
                 true,
                 camera.transform.position,
@@ -968,55 +963,56 @@ namespace UnityEngine.Rendering.Universal.Internal
         #endregion
 
         #region Motion Blur
-#if ENABLE_VR && ENABLE_XR_MODULE
-        // Hold the stereo matrices to avoid allocating arrays every frame
-        internal static readonly Matrix4x4[] viewProjMatrixStereo = new Matrix4x4[2];
-#endif
-        void DoMotionBlur(CameraData cameraData, CommandBuffer cmd, RenderTargetIdentifier source, RenderTargetIdentifier destination)
+        static readonly int kShaderPropertyId_ViewProjM = Shader.PropertyToID("_ViewProjM");
+        static readonly int kShaderPropertyId_PrevViewProjM = Shader.PropertyToID("_PrevViewProjM");
+        static readonly int kShaderPropertyId_ViewProjMStereo = Shader.PropertyToID("_ViewProjMStereo");
+        static readonly int kShaderPropertyId_PrevViewProjMStereo = Shader.PropertyToID("_PrevViewProjMStereo");
+
+        void UpdateMotionBlurMatrices(ref Material material, Camera camera, XRPass xr)
         {
-            var material = m_Materials.cameraMotionBlur;
+            MotionVectorsPersistentData motionData = null;
+
+            if (camera.TryGetComponent<UniversalAdditionalCameraData>(out var additionalCameraData))
+                motionData = additionalCameraData.motionVectorsPersistentData;
+
+            if (motionData == null)
+                return;
 
 #if ENABLE_VR && ENABLE_XR_MODULE
-            if (cameraData.xr.enabled && cameraData.xr.singlePassEnabled)
+            if (xr.enabled && xr.singlePassEnabled)
             {
-                var viewProj0 = GL.GetGPUProjectionMatrix(cameraData.GetProjectionMatrix(0), true) * cameraData.GetViewMatrix(0);
-                var viewProj1 = GL.GetGPUProjectionMatrix(cameraData.GetProjectionMatrix(1), true) * cameraData.GetViewMatrix(1);
+                material.SetMatrixArray(kShaderPropertyId_ViewProjMStereo, motionData.viewProjectionStereo);
                 if (m_ResetHistory)
-                {
-                    viewProjMatrixStereo[0] = viewProj0;
-                    viewProjMatrixStereo[1] = viewProj1;
-                    material.SetMatrixArray("_PrevViewProjMStereo", viewProjMatrixStereo);
-                }
+                    material.SetMatrixArray(kShaderPropertyId_PrevViewProjMStereo, motionData.viewProjectionStereo);
                 else
-                    material.SetMatrixArray("_PrevViewProjMStereo", m_PrevViewProjM);
-
-                m_PrevViewProjM[0] = viewProj0;
-                m_PrevViewProjM[1] = viewProj1;
+                    material.SetMatrixArray(kShaderPropertyId_PrevViewProjMStereo, motionData.previousViewProjectionStereo);
             }
             else
 #endif
             {
                 int prevViewProjMIdx = 0;
 #if ENABLE_VR && ENABLE_XR_MODULE
-                if (cameraData.xr.enabled)
-                    prevViewProjMIdx = cameraData.xr.multipassId;
+                if (xr.enabled)
+                    prevViewProjMIdx = xr.multipassId;
 #endif
                 // This is needed because Blit will reset viewproj matrices to identity and UniversalRP currently
                 // relies on SetupCameraProperties instead of handling its own matrices.
                 // TODO: We need get rid of SetupCameraProperties and setup camera matrices in Universal
-                var proj = cameraData.GetProjectionMatrix();
-                var view = cameraData.GetViewMatrix();
-                var viewProj = proj * view;
 
-                material.SetMatrix("_ViewProjM", viewProj);
+                material.SetMatrix(kShaderPropertyId_ViewProjM, motionData.viewProjection);
 
                 if (m_ResetHistory)
-                    material.SetMatrix("_PrevViewProjM", viewProj);
+                    material.SetMatrix(kShaderPropertyId_PrevViewProjM, motionData.viewProjection);
                 else
-                    material.SetMatrix("_PrevViewProjM", m_PrevViewProjM[prevViewProjMIdx]);
-
-                m_PrevViewProjM[prevViewProjMIdx] = viewProj;
+                    material.SetMatrix(kShaderPropertyId_PrevViewProjM, motionData.previousViewProjection);
             }
+        }
+
+        void DoMotionBlur(CameraData cameraData, CommandBuffer cmd, RenderTargetIdentifier source, RenderTargetIdentifier destination)
+        {
+            var material = m_Materials.cameraMotionBlur;
+
+            UpdateMotionBlurMatrices(ref material, cameraData.camera, cameraData.xr);
 
             material.SetFloat("_Intensity", m_MotionBlur.intensity.value);
             material.SetFloat("_Clamp", m_MotionBlur.clamp.value);
@@ -1370,10 +1366,6 @@ namespace UnityEngine.Rendering.Universal.Internal
             var material = m_Materials.finalPass;
             material.shaderKeywords = null;
 
-            // FXAA setup
-            if (cameraData.antialiasing == AntialiasingMode.FastApproximateAntialiasing)
-                material.EnableKeyword(ShaderKeywordStrings.Fxaa);
-
             PostProcessUtils.SetSourceSize(cmd, cameraData.cameraTargetDescriptor);
 
             SetupGrain(cameraData, material);
@@ -1396,6 +1388,137 @@ namespace UnityEngine.Rendering.Universal.Internal
             cmd.SetGlobalTexture(ShaderPropertyId.sourceTex, m_Source);
 
             var colorLoadAction = cameraData.isDefaultViewport ? RenderBufferLoadAction.DontCare : RenderBufferLoadAction.Load;
+
+            bool isScalingSetupUsed = false;
+            bool isUpscaledTextureUsed = false;
+
+            bool isFxaaEnabled = (cameraData.antialiasing == AntialiasingMode.FastApproximateAntialiasing);
+
+            if (cameraData.imageScalingMode != ImageScalingMode.None)
+            {
+                // FSR is only considered "enabled" when we're performing upscaling. (downscaling uses a linear filter unconditionally)
+                bool isFsrEnabled = ((cameraData.imageScalingMode == ImageScalingMode.Upscaling) && (cameraData.upscalingFilter == ImageUpscalingFilter.FSR));
+
+                // When FXAA is enabled in scaled renders, we execute it in a separate blit since it's not designed to be used in
+                // situations where the input and output resolutions do not match.
+                // When FSR is active, we always need an additional pass since it has a very particular color encoding requirement.
+                // NOTE: An ideal implementation could inline this color conversion logic into the UberPost pass, but the current code structure would make
+                //       this process very complex. Specifically, we'd need to guarantee that the uber post output is always written to a UNORM format render
+                //       target in order to preserve the precision of specially encoded color data.
+                bool isSetupRequired = (isFxaaEnabled || isFsrEnabled);
+
+                // Make sure to remove any MSAA and attached depth buffers from the temporary render targets
+                var tempRtDesc = cameraData.cameraTargetDescriptor;
+                tempRtDesc.msaaSamples = 1;
+                tempRtDesc.depthBufferBits = 0;
+
+                // Select a UNORM format since we've already performed tonemapping. (Values are in 0-1 range)
+                // This improves precision and is required if we want to avoid excessive banding when FSR is in use.
+                tempRtDesc.graphicsFormat = UniversalRenderPipeline.MakeUnormRenderTextureGraphicsFormat();
+
+                m_Materials.scalingSetup.shaderKeywords = null;
+
+                var sourceRtId = m_Source;
+
+                if (isSetupRequired)
+                {
+                    if (isFxaaEnabled)
+                    {
+                        m_Materials.scalingSetup.EnableKeyword(ShaderKeywordStrings.Fxaa);
+                    }
+
+                    if (isFsrEnabled)
+                    {
+                        m_Materials.scalingSetup.EnableKeyword(ShaderKeywordStrings.Gamma20);
+                    }
+
+                    cmd.GetTemporaryRT(ShaderConstants._ScalingSetupTexture, tempRtDesc, FilterMode.Point);
+                    isScalingSetupUsed = true;
+
+                    Blit(cmd, m_Source, ShaderConstants._ScalingSetupTexture, m_Materials.scalingSetup);
+
+                    cmd.SetGlobalTexture(ShaderPropertyId.sourceTex, ShaderConstants._ScalingSetupTexture);
+
+                    sourceRtId = ShaderConstants._ScalingSetupTexture;
+                }
+
+                switch (cameraData.imageScalingMode)
+                {
+                    case ImageScalingMode.Upscaling:
+                    {
+                        // In the upscaling case, set material keywords based on the selected upscaling filter
+                        // Note: If FSR is enabled, we go down this path regardless of the current render scale. We do this because
+                        //       FSR still provides visual benefits at 100% scale. This will also make the transition between 99% and 100%
+                        //       scale less obvious for cases where FSR is used with dynamic resolution scaling.
+                        switch (cameraData.upscalingFilter)
+                        {
+                            case ImageUpscalingFilter.Point:
+                            {
+                                material.EnableKeyword(ShaderKeywordStrings.PointSampling);
+                                break;
+                            }
+
+                            case ImageUpscalingFilter.Linear:
+                            {
+                                // Do nothing as linear is the default filter in the shader
+                                break;
+                            }
+
+                            case ImageUpscalingFilter.FSR:
+                            {
+                                m_Materials.easu.shaderKeywords = null;
+
+                                var upscaleRtDesc = tempRtDesc;
+                                upscaleRtDesc.width = cameraData.pixelWidth;
+                                upscaleRtDesc.height = cameraData.pixelHeight;
+
+                                // EASU
+                                cmd.GetTemporaryRT(ShaderConstants._UpscaledTexture, upscaleRtDesc, FilterMode.Point);
+                                isUpscaledTextureUsed = true;
+
+                                var fsrInputSize = new Vector2(cameraData.cameraTargetDescriptor.width, cameraData.cameraTargetDescriptor.height);
+                                var fsrOutputSize = new Vector2(cameraData.pixelWidth, cameraData.pixelHeight);
+                                FSRUtils.SetEasuConstants(cmd, fsrInputSize, fsrInputSize, fsrOutputSize);
+
+                                Blit(cmd, sourceRtId, ShaderConstants._UpscaledTexture, m_Materials.easu);
+
+                                // RCAS
+                                // Use the override value if it's available, otherwise use the default.
+                                float sharpness = cameraData.fsrOverrideSharpness ? cameraData.fsrSharpness : FSRUtils.kDefaultSharpnessLinear;
+
+                                // Set up the parameters for the RCAS pass unless the sharpness value indicates that it wont have any effect.
+                                if (cameraData.fsrSharpness > 0.0f)
+                                {
+                                    // RCAS is performed during the final post blit, but we set up the parameters here for better logical grouping.
+                                    material.EnableKeyword(ShaderKeywordStrings.Rcas);
+                                    FSRUtils.SetRcasConstantsLinear(cmd, sharpness);
+                                }
+
+                                // Update the source texture for the next operation
+                                cmd.SetGlobalTexture(ShaderPropertyId.sourceTex, ShaderConstants._UpscaledTexture);
+                                PostProcessUtils.SetSourceSize(cmd, upscaleRtDesc);
+
+                                break;
+                            }
+                        }
+
+                        break;
+                    }
+
+                    case ImageScalingMode.Downscaling:
+                    {
+                        // In the downscaling case, we don't perform any sort of filter override logic since we always want linear filtering
+                        // and it's already the default option in the shader.
+
+                        break;
+                    }
+                }
+            }
+            else if (isFxaaEnabled)
+            {
+                // In unscaled renders, FXAA can be safely performed in the FinalPost shader
+                material.EnableKeyword(ShaderKeywordStrings.Fxaa);
+            }
 
             RenderTargetHandle cameraTargetHandle = RenderTargetHandle.GetCameraTarget(cameraData.xr);
 
@@ -1433,6 +1556,16 @@ namespace UnityEngine.Rendering.Universal.Internal
                 cmd.SetViewProjectionMatrices(cameraData.camera.worldToCameraMatrix, cameraData.camera.projectionMatrix);
                 cameraData.renderer.ConfigureCameraTarget(cameraTarget, cameraTarget);
             }
+
+            if (isUpscaledTextureUsed)
+            {
+                cmd.ReleaseTemporaryRT(ShaderConstants._UpscaledTexture);
+            }
+
+            if (isScalingSetupUsed)
+            {
+                cmd.ReleaseTemporaryRT(ShaderConstants._ScalingSetupTexture);
+            }
         }
 
         #endregion
@@ -1448,6 +1581,8 @@ namespace UnityEngine.Rendering.Universal.Internal
             public readonly Material cameraMotionBlur;
             public readonly Material paniniProjection;
             public readonly Material bloom;
+            public readonly Material scalingSetup;
+            public readonly Material easu;
             public readonly Material uber;
             public readonly Material finalPass;
             public readonly Material lensFlareDataDriven;
@@ -1461,6 +1596,8 @@ namespace UnityEngine.Rendering.Universal.Internal
                 cameraMotionBlur = Load(data.shaders.cameraMotionBlurPS);
                 paniniProjection = Load(data.shaders.paniniProjectionPS);
                 bloom = Load(data.shaders.bloomPS);
+                scalingSetup = Load(data.shaders.scalingSetupPS);
+                easu = Load(data.shaders.easuPS);
                 uber = Load(data.shaders.uberPostPS);
                 finalPass = Load(data.shaders.finalPostPassPS);
                 lensFlareDataDriven = Load(data.shaders.LensFlareDataDrivenPS);
@@ -1490,6 +1627,8 @@ namespace UnityEngine.Rendering.Universal.Internal
                 CoreUtils.Destroy(cameraMotionBlur);
                 CoreUtils.Destroy(paniniProjection);
                 CoreUtils.Destroy(bloom);
+                CoreUtils.Destroy(scalingSetup);
+                CoreUtils.Destroy(easu);
                 CoreUtils.Destroy(uber);
                 CoreUtils.Destroy(finalPass);
             }
@@ -1551,6 +1690,9 @@ namespace UnityEngine.Rendering.Universal.Internal
             public static readonly int _FlareData5 = Shader.PropertyToID("_FlareData5");
 
             public static readonly int _FullscreenProjMat = Shader.PropertyToID("_FullscreenProjMat");
+
+            public static readonly int _ScalingSetupTexture = Shader.PropertyToID("_ScalingSetupTexture");
+            public static readonly int _UpscaledTexture = Shader.PropertyToID("_UpscaledTexture");
 
             public static int[] _BloomMipUp;
             public static int[] _BloomMipDown;

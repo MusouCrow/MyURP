@@ -12,6 +12,11 @@ namespace UnityEngine.Rendering.Universal
     [Tooltip("Screen Space Shadows")]
     internal class ScreenSpaceShadows : ScriptableRendererFeature
     {
+#if UNITY_EDITOR
+        [UnityEditor.ShaderKeywordFilter.SelectIf(true, keywordNames: ShaderKeywordStrings.MainLightShadowScreen)]
+        private const bool k_RequiresScreenSpaceShadowsKeyword = true;
+#endif
+
         // Serialized Fields
         [SerializeField, HideInInspector] private Shader m_Shader = null;
         [SerializeField] private ScreenSpaceShadowsSettings m_Settings = new ScreenSpaceShadowsSettings();
@@ -161,9 +166,15 @@ namespace UnityEngine.Rendering.Universal
                     }
                     else
                     {
+                        Vector4 scaleBias = new Vector4(1, 1, 0, 0);
+                        Vector4 scaleBiasRt = new Vector4(1, 1, 0, 0);
+                        cmd.SetGlobalVector(ShaderPropertyId.scaleBias, scaleBias);
+                        cmd.SetGlobalVector(ShaderPropertyId.scaleBiasRt, scaleBiasRt);
                         // Avoid setting and restoring camera view and projection matrices when in stereo.
                         RenderTargetIdentifier screenSpaceShadowTexture = m_RenderTarget.Identifier();
-                        cmd.Blit(null, screenSpaceShadowTexture, m_Material);
+                        cmd.SetRenderTarget(new RenderTargetIdentifier(screenSpaceShadowTexture, 0, CubemapFace.Unknown, -1),
+                            RenderBufferLoadAction.DontCare, RenderBufferStoreAction.Store, RenderBufferLoadAction.DontCare, RenderBufferStoreAction.Store);
+                        cmd.DrawProcedural(Matrix4x4.identity, m_Material, 0, MeshTopology.Quads, 4, 1, null);
                     }
 
                     CoreUtils.SetKeyword(cmd, ShaderKeywordStrings.MainLightShadows, false);

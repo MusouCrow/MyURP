@@ -15,6 +15,36 @@ namespace UnityEngine.Rendering.Universal
         Subtractive,
     };
 
+    /// <summary>
+    /// Enumeration that indicates what kind of image scaling is occurring if any
+    /// </summary>
+    internal enum ImageScalingMode
+    {
+        /// No scaling
+        None,
+
+        /// Upscaling to a larger image
+        Upscaling,
+
+        /// Downscaling to a smaller image
+        Downscaling
+    }
+
+    /// <summary>
+    /// Enumeration that indicates what kind of upscaling filter is being used
+    /// </summary>
+    internal enum ImageUpscalingFilter
+    {
+        /// Bilinear filtering
+        Linear,
+
+        /// Nearest-Neighbor filtering
+        Point,
+
+        /// FidelityFX Super Resolution
+        FSR
+    }
+
     public struct RenderingData
     {
         public CullingResults cullResults;
@@ -110,6 +140,10 @@ namespace UnityEngine.Rendering.Universal
         internal int pixelHeight;
         internal float aspectRatio;
         public float renderScale;
+        internal ImageScalingMode imageScalingMode;
+        internal ImageUpscalingFilter upscalingFilter;
+        internal bool fsrOverrideSharpness;
+        internal float fsrSharpness;
         public bool clearDepth;
         public CameraType cameraType;
         public bool isDefaultViewport;
@@ -298,6 +332,7 @@ namespace UnityEngine.Rendering.Universal
         public static readonly int projectionParams = Shader.PropertyToID("_ProjectionParams");
         public static readonly int zBufferParams = Shader.PropertyToID("_ZBufferParams");
         public static readonly int orthoParams = Shader.PropertyToID("unity_OrthoParams");
+        public static readonly int globalMipBias = Shader.PropertyToID("_GlobalMipBias");
 
         public static readonly int screenSize = Shader.PropertyToID("_ScreenSize");
 
@@ -340,95 +375,98 @@ namespace UnityEngine.Rendering.Universal
 
     public static class ShaderKeywordStrings
     {
-        public static readonly string MainLightShadows = "_MAIN_LIGHT_SHADOWS";
-        public static readonly string MainLightShadowCascades = "_MAIN_LIGHT_SHADOWS_CASCADE";
-        public static readonly string MainLightShadowScreen = "_MAIN_LIGHT_SHADOWS_SCREEN";
-        public static readonly string CastingPunctualLightShadow = "_CASTING_PUNCTUAL_LIGHT_SHADOW"; // This is used during shadow map generation to differentiate between directional and punctual light shadows, as they use different formulas to apply Normal Bias
-        public static readonly string AdditionalLightsVertex = "_ADDITIONAL_LIGHTS_VERTEX";
-        public static readonly string AdditionalLightsPixel = "_ADDITIONAL_LIGHTS";
-        internal static readonly string ClusteredRendering = "_CLUSTERED_RENDERING";
-        public static readonly string AdditionalLightShadows = "_ADDITIONAL_LIGHT_SHADOWS";
-        public static readonly string ReflectionProbeBoxProjection = "_REFLECTION_PROBE_BOX_PROJECTION";
-        public static readonly string ReflectionProbeBlending = "_REFLECTION_PROBE_BLENDING";
-        public static readonly string SoftShadows = "_SHADOWS_SOFT";
-        public static readonly string MixedLightingSubtractive = "_MIXED_LIGHTING_SUBTRACTIVE"; // Backward compatibility
-        public static readonly string LightmapShadowMixing = "LIGHTMAP_SHADOW_MIXING";
-        public static readonly string ShadowsShadowMask = "SHADOWS_SHADOWMASK";
-        public static readonly string LightLayers = "_LIGHT_LAYERS";
-        public static readonly string RenderPassEnabled = "_RENDER_PASS_ENABLED";
-        public static readonly string BillboardFaceCameraPos = "BILLBOARD_FACE_CAMERA_POS";
-        public static readonly string LightCookies = "_LIGHT_COOKIES";
+        public const string MainLightShadows = "_MAIN_LIGHT_SHADOWS";
+        public const string MainLightShadowCascades = "_MAIN_LIGHT_SHADOWS_CASCADE";
+        public const string MainLightShadowScreen = "_MAIN_LIGHT_SHADOWS_SCREEN";
+        public const string CastingPunctualLightShadow = "_CASTING_PUNCTUAL_LIGHT_SHADOW"; // This is used during shadow map generation to differentiate between directional and punctual light shadows, as they use different formulas to apply Normal Bias
+        public const string AdditionalLightsVertex = "_ADDITIONAL_LIGHTS_VERTEX";
+        public const string AdditionalLightsPixel = "_ADDITIONAL_LIGHTS";
+        internal const string ClusteredRendering = "_CLUSTERED_RENDERING";
+        public const string AdditionalLightShadows = "_ADDITIONAL_LIGHT_SHADOWS";
+        public const string ReflectionProbeBoxProjection = "_REFLECTION_PROBE_BOX_PROJECTION";
+        public const string ReflectionProbeBlending = "_REFLECTION_PROBE_BLENDING";
+        public const string SoftShadows = "_SHADOWS_SOFT";
+        public const string MixedLightingSubtractive = "_MIXED_LIGHTING_SUBTRACTIVE"; // Backward compatibility
+        public const string LightmapShadowMixing = "LIGHTMAP_SHADOW_MIXING";
+        public const string ShadowsShadowMask = "SHADOWS_SHADOWMASK";
+        public const string LightLayers = "_LIGHT_LAYERS";
+        public const string RenderPassEnabled = "_RENDER_PASS_ENABLED";
+        public const string BillboardFaceCameraPos = "BILLBOARD_FACE_CAMERA_POS";
+        public const string LightCookies = "_LIGHT_COOKIES";
 
-        public static readonly string DepthNoMsaa = "_DEPTH_NO_MSAA";
-        public static readonly string DepthMsaa2 = "_DEPTH_MSAA_2";
-        public static readonly string DepthMsaa4 = "_DEPTH_MSAA_4";
-        public static readonly string DepthMsaa8 = "_DEPTH_MSAA_8";
+        public const string DepthNoMsaa = "_DEPTH_NO_MSAA";
+        public const string DepthMsaa2 = "_DEPTH_MSAA_2";
+        public const string DepthMsaa4 = "_DEPTH_MSAA_4";
+        public const string DepthMsaa8 = "_DEPTH_MSAA_8";
 
-        public static readonly string LinearToSRGBConversion = "_LINEAR_TO_SRGB_CONVERSION";
-        internal static readonly string UseFastSRGBLinearConversion = "_USE_FAST_SRGB_LINEAR_CONVERSION";
+        public const string LinearToSRGBConversion = "_LINEAR_TO_SRGB_CONVERSION";
+        internal const string UseFastSRGBLinearConversion = "_USE_FAST_SRGB_LINEAR_CONVERSION";
 
-        public static readonly string DBufferMRT1 = "_DBUFFER_MRT1";
-        public static readonly string DBufferMRT2 = "_DBUFFER_MRT2";
-        public static readonly string DBufferMRT3 = "_DBUFFER_MRT3";
-        public static readonly string DecalNormalBlendLow = "_DECAL_NORMAL_BLEND_LOW";
-        public static readonly string DecalNormalBlendMedium = "_DECAL_NORMAL_BLEND_MEDIUM";
-        public static readonly string DecalNormalBlendHigh = "_DECAL_NORMAL_BLEND_HIGH";
+        public const string DBufferMRT1 = "_DBUFFER_MRT1";
+        public const string DBufferMRT2 = "_DBUFFER_MRT2";
+        public const string DBufferMRT3 = "_DBUFFER_MRT3";
+        public const string DecalNormalBlendLow = "_DECAL_NORMAL_BLEND_LOW";
+        public const string DecalNormalBlendMedium = "_DECAL_NORMAL_BLEND_MEDIUM";
+        public const string DecalNormalBlendHigh = "_DECAL_NORMAL_BLEND_HIGH";
 
-        public static readonly string SmaaLow = "_SMAA_PRESET_LOW";
-        public static readonly string SmaaMedium = "_SMAA_PRESET_MEDIUM";
-        public static readonly string SmaaHigh = "_SMAA_PRESET_HIGH";
-        public static readonly string PaniniGeneric = "_GENERIC";
-        public static readonly string PaniniUnitDistance = "_UNIT_DISTANCE";
-        public static readonly string BloomLQ = "_BLOOM_LQ";
-        public static readonly string BloomHQ = "_BLOOM_HQ";
-        public static readonly string BloomLQDirt = "_BLOOM_LQ_DIRT";
-        public static readonly string BloomHQDirt = "_BLOOM_HQ_DIRT";
-        public static readonly string UseRGBM = "_USE_RGBM";
-        public static readonly string Distortion = "_DISTORTION";
-        public static readonly string ChromaticAberration = "_CHROMATIC_ABERRATION";
-        public static readonly string HDRGrading = "_HDR_GRADING";
-        public static readonly string TonemapACES = "_TONEMAP_ACES";
-        public static readonly string TonemapNeutral = "_TONEMAP_NEUTRAL";
-        public static readonly string FilmGrain = "_FILM_GRAIN";
-        public static readonly string Fxaa = "_FXAA";
-        public static readonly string Dithering = "_DITHERING";
-        public static readonly string ScreenSpaceOcclusion = "_SCREEN_SPACE_OCCLUSION";
+        public const string SmaaLow = "_SMAA_PRESET_LOW";
+        public const string SmaaMedium = "_SMAA_PRESET_MEDIUM";
+        public const string SmaaHigh = "_SMAA_PRESET_HIGH";
+        public const string PaniniGeneric = "_GENERIC";
+        public const string PaniniUnitDistance = "_UNIT_DISTANCE";
+        public const string BloomLQ = "_BLOOM_LQ";
+        public const string BloomHQ = "_BLOOM_HQ";
+        public const string BloomLQDirt = "_BLOOM_LQ_DIRT";
+        public const string BloomHQDirt = "_BLOOM_HQ_DIRT";
+        public const string UseRGBM = "_USE_RGBM";
+        public const string Distortion = "_DISTORTION";
+        public const string ChromaticAberration = "_CHROMATIC_ABERRATION";
+        public const string HDRGrading = "_HDR_GRADING";
+        public const string TonemapACES = "_TONEMAP_ACES";
+        public const string TonemapNeutral = "_TONEMAP_NEUTRAL";
+        public const string FilmGrain = "_FILM_GRAIN";
+        public const string Fxaa = "_FXAA";
+        public const string Dithering = "_DITHERING";
+        public const string ScreenSpaceOcclusion = "_SCREEN_SPACE_OCCLUSION";
+        public const string PointSampling = "_POINT_SAMPLING";
+        public const string Rcas = "_RCAS";
+        public const string Gamma20 = "_GAMMA_20";
 
-        public static readonly string HighQualitySampling = "_HIGH_QUALITY_SAMPLING";
+        public const string HighQualitySampling = "_HIGH_QUALITY_SAMPLING";
 
-        public static readonly string DOWNSAMPLING_SIZE_2 = "DOWNSAMPLING_SIZE_2";
-        public static readonly string DOWNSAMPLING_SIZE_4 = "DOWNSAMPLING_SIZE_4";
-        public static readonly string DOWNSAMPLING_SIZE_8 = "DOWNSAMPLING_SIZE_8";
-        public static readonly string DOWNSAMPLING_SIZE_16 = "DOWNSAMPLING_SIZE_16";
-        public static readonly string _SPOT = "_SPOT";
-        public static readonly string _DIRECTIONAL = "_DIRECTIONAL";
-        public static readonly string _POINT = "_POINT";
-        public static readonly string _DEFERRED_STENCIL = "_DEFERRED_STENCIL";
-        public static readonly string _DEFERRED_FIRST_LIGHT = "_DEFERRED_FIRST_LIGHT";
-        public static readonly string _DEFERRED_MAIN_LIGHT = "_DEFERRED_MAIN_LIGHT";
-        public static readonly string _GBUFFER_NORMALS_OCT = "_GBUFFER_NORMALS_OCT";
-        public static readonly string _DEFERRED_MIXED_LIGHTING = "_DEFERRED_MIXED_LIGHTING";
-        public static readonly string LIGHTMAP_ON = "LIGHTMAP_ON";
-        public static readonly string DYNAMICLIGHTMAP_ON = "DYNAMICLIGHTMAP_ON";
-        public static readonly string _ALPHATEST_ON = "_ALPHATEST_ON";
-        public static readonly string DIRLIGHTMAP_COMBINED = "DIRLIGHTMAP_COMBINED";
-        public static readonly string _DETAIL_MULX2 = "_DETAIL_MULX2";
-        public static readonly string _DETAIL_SCALED = "_DETAIL_SCALED";
-        public static readonly string _CLEARCOAT = "_CLEARCOAT";
-        public static readonly string _CLEARCOATMAP = "_CLEARCOATMAP";
-        public static readonly string DEBUG_DISPLAY = "DEBUG_DISPLAY";
+        public const string DOWNSAMPLING_SIZE_2 = "DOWNSAMPLING_SIZE_2";
+        public const string DOWNSAMPLING_SIZE_4 = "DOWNSAMPLING_SIZE_4";
+        public const string DOWNSAMPLING_SIZE_8 = "DOWNSAMPLING_SIZE_8";
+        public const string DOWNSAMPLING_SIZE_16 = "DOWNSAMPLING_SIZE_16";
+        public const string _SPOT = "_SPOT";
+        public const string _DIRECTIONAL = "_DIRECTIONAL";
+        public const string _POINT = "_POINT";
+        public const string _DEFERRED_STENCIL = "_DEFERRED_STENCIL";
+        public const string _DEFERRED_FIRST_LIGHT = "_DEFERRED_FIRST_LIGHT";
+        public const string _DEFERRED_MAIN_LIGHT = "_DEFERRED_MAIN_LIGHT";
+        public const string _GBUFFER_NORMALS_OCT = "_GBUFFER_NORMALS_OCT";
+        public const string _DEFERRED_MIXED_LIGHTING = "_DEFERRED_MIXED_LIGHTING";
+        public const string LIGHTMAP_ON = "LIGHTMAP_ON";
+        public const string DYNAMICLIGHTMAP_ON = "DYNAMICLIGHTMAP_ON";
+        public const string _ALPHATEST_ON = "_ALPHATEST_ON";
+        public const string DIRLIGHTMAP_COMBINED = "DIRLIGHTMAP_COMBINED";
+        public const string _DETAIL_MULX2 = "_DETAIL_MULX2";
+        public const string _DETAIL_SCALED = "_DETAIL_SCALED";
+        public const string _CLEARCOAT = "_CLEARCOAT";
+        public const string _CLEARCOATMAP = "_CLEARCOATMAP";
+        public const string DEBUG_DISPLAY = "DEBUG_DISPLAY";
 
-        public static readonly string _EMISSION = "_EMISSION";
-        public static readonly string _RECEIVE_SHADOWS_OFF = "_RECEIVE_SHADOWS_OFF";
-        public static readonly string _SURFACE_TYPE_TRANSPARENT = "_SURFACE_TYPE_TRANSPARENT";
-        public static readonly string _ALPHAPREMULTIPLY_ON = "_ALPHAPREMULTIPLY_ON";
-        public static readonly string _ALPHAMODULATE_ON = "_ALPHAMODULATE_ON";
-        public static readonly string _NORMALMAP = "_NORMALMAP";
+        public const string _EMISSION = "_EMISSION";
+        public const string _RECEIVE_SHADOWS_OFF = "_RECEIVE_SHADOWS_OFF";
+        public const string _SURFACE_TYPE_TRANSPARENT = "_SURFACE_TYPE_TRANSPARENT";
+        public const string _ALPHAPREMULTIPLY_ON = "_ALPHAPREMULTIPLY_ON";
+        public const string _ALPHAMODULATE_ON = "_ALPHAMODULATE_ON";
+        public const string _NORMALMAP = "_NORMALMAP";
 
-        public static readonly string EDITOR_VISUALIZATION = "EDITOR_VISUALIZATION";
+        public const string EDITOR_VISUALIZATION = "EDITOR_VISUALIZATION";
 
         // XR
-        public static readonly string UseDrawProcedural = "_USE_DRAW_PROCEDURAL";
+        public const string UseDrawProcedural = "_USE_DRAW_PROCEDURAL";
     }
 
     public sealed partial class UniversalRenderPipeline
@@ -528,6 +566,17 @@ namespace UnityEngine.Rendering.Universal
             return SystemInfo.GetGraphicsFormat(DefaultFormat.LDR);
         }
 
+        // Returns a UNORM based render texture format
+        // When supported by the device, this function will prefer formats with higher precision, but the same bit-depth
+        // NOTE: This function does not guarantee that the returned format will contain an alpha channel.
+        internal static GraphicsFormat MakeUnormRenderTextureGraphicsFormat()
+        {
+            if (RenderingUtils.SupportsGraphicsFormat(GraphicsFormat.A2B10G10R10_UNormPack32, FormatUsage.Linear | FormatUsage.Render))
+                return GraphicsFormat.A2B10G10R10_UNormPack32;
+            else
+                return GraphicsFormat.R8G8B8A8_UNorm;
+        }
+
         static RenderTextureDescriptor CreateRenderTextureDescriptor(Camera camera, float renderScale,
             bool isHdrEnabled, int msaaSamples, bool needsAlpha, bool requiresOpaqueTexture)
         {
@@ -566,6 +615,19 @@ namespace UnityEngine.Rendering.Universal
             desc.enableRandomWrite = false;
             desc.bindMS = false;
             desc.useDynamicScale = camera.allowDynamicResolution;
+
+            // The way RenderTextures handle MSAA fallback when an unsupported sample count of 2 is requested (falling back to numSamples = 1), differs fom the way
+            // the fallback is handled when setting up the Vulkan swapchain (rounding up numSamples to 4, if supported). This caused an issue on Mali GPUs which don't support
+            // 2x MSAA.
+            // The following code makes sure that on Vulkan the MSAA unsupported fallback behaviour is consistent between RenderTextures and Swapchain.
+            // TODO: we should review how all backends handle MSAA fallbacks and move these implementation details in engine code.
+            if (SystemInfo.graphicsDeviceType == GraphicsDeviceType.Vulkan)
+            {
+                // if the requested number of samples is 2, and the supported value is 1x, it means that 2x is unsupported on this GPU.
+                // Then we bump up the requested value to 4.
+                if (desc.msaaSamples == 2 && SystemInfo.GetRenderTextureSupportedMSAASampleCount(desc) == 1)
+                    desc.msaaSamples = 4;
+            }
 
             // check that the requested MSAA samples count is supported by the current platform. If it's not supported,
             // replace the requested desc.msaaSamples value with the actual value the engine falls back to
@@ -735,7 +797,7 @@ namespace UnityEngine.Rendering.Universal
 
                 // On untethered devices: Use the faster linear smoothing factor (SHADER_HINT_NICE_QUALITY).
                 // On other devices: Use the smoothing factor that matches the GI.
-                lightAttenuation.x = Application.isMobilePlatform || SystemInfo.graphicsDeviceType == GraphicsDeviceType.Switch ? oneOverFadeRangeSqr : oneOverLightRangeSqr;
+                lightAttenuation.x = GraphicsSettings.HasShaderDefine(Graphics.activeTier, BuiltinShaderDefine.SHADER_API_MOBILE) || SystemInfo.graphicsDeviceType == GraphicsDeviceType.Switch ? oneOverFadeRangeSqr : oneOverLightRangeSqr;
                 lightAttenuation.y = lightRangeSqrOverFadeRangeSqr;
             }
 

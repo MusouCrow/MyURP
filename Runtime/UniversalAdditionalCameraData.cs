@@ -278,6 +278,9 @@ namespace UnityEngine.Rendering.Universal
 
         [HideInInspector] [SerializeField] float m_Version = 2;
 
+        // These persist over multiple frames
+        [NonSerialized] MotionVectorsPersistentData m_MotionVectorsPersistentData = new MotionVectorsPersistentData();
+
         public float version => m_Version;
 
         static UniversalAdditionalCameraData s_DefaultAdditionalCameraData = null;
@@ -351,7 +354,7 @@ namespace UnityEngine.Rendering.Universal
 
         /// <summary>
         /// Returns the camera stack. Only valid for Base cameras.
-        /// Overlay cameras have no stack and will return null.
+        /// Will return null if it is not a Base camera.
         /// <seealso cref="CameraRenderType"/>.
         /// </summary>
         public List<Camera> cameraStack
@@ -365,7 +368,7 @@ namespace UnityEngine.Rendering.Universal
                     return null;
                 }
 
-                if (scriptableRenderer.supportedRenderingFeatures.cameraStacking == false)
+                if (!scriptableRenderer.SupportsCameraStackingType(CameraRenderType.Base))
                 {
                     var camera = gameObject.GetComponent<Camera>();
                     Debug.LogWarning(string.Format("{0}: This camera has a ScriptableRenderer that doesn't support camera stacking. Camera stack is null.", camera.name));
@@ -549,6 +552,11 @@ namespace UnityEngine.Rendering.Universal
             get => m_AntialiasingQuality;
             set => m_AntialiasingQuality = value;
         }
+
+        /// <summary>
+        /// Motion data that persists over a frame.
+        /// </summary>
+        internal MotionVectorsPersistentData motionVectorsPersistentData => m_MotionVectorsPersistentData;
 
         /// <summary>
         /// Returns true if this camera should automatically replace NaN/Inf in shaders by a black pixel to avoid breaking some effects.
